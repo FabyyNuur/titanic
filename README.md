@@ -92,3 +92,45 @@ Le système gère automatiquement un registre de modèles dans `var/registry.jso
 ## Auteur
 
 Développé dans le cadre de la modernisation du projet Titanic ML pour une démonstration MLOps complète.
+
+---
+
+## Déploiement sur Render
+
+Le dépôt contient un fichier [render.yaml](render.yaml) prêt à l'emploi.
+
+### 1. Prérequis
+
+1. Pousser le projet sur GitHub.
+2. Vérifier que [requirements.txt](requirements.txt) contient bien gunicorn.
+3. Vérifier que le frontend build correctement avec npm run build dans [frontend/package.json](frontend/package.json).
+
+### 2. Création du service
+
+1. Ouvrir Render.
+2. New + puis Blueprint.
+3. Connecter le repository GitHub puis sélectionner le dépôt.
+4. Render détecte automatiquement [render.yaml](render.yaml) et crée le service web.
+
+### 3. Build et démarrage utilisés
+
+- Build:
+  pip install -r requirements.txt
+  cd frontend
+  npm ci
+  npm run build
+
+- Start:
+  gunicorn mlops.app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+
+### 4. Vérification après déploiement
+
+1. Vérifier la santé API sur /api/health.
+2. Ouvrir la racine du service pour charger l'interface React servie par Flask.
+3. Vérifier les endpoints principaux: /api/models, /api/predict, /api/metrics.
+
+### 5. Important sur les données runtime
+
+Le dossier var est écrit en runtime (logs, runs, registre). Sur Render, le filesystem est éphémère sans disque persistant.
+
+Si tu veux conserver ces données entre redéploiements/redémarrages, utilise un disque persistant Render ou migre ces artefacts vers un stockage externe (base de données/objet).
