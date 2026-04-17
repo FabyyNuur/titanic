@@ -37,9 +37,13 @@ def create_app() -> Flask:
 
     @api.get("/health")
     def health():
+        return jsonify({"status": "ok"})
+
+    @api.get("/ready")
+    def ready():
         try:
             _, _, model_record = load_runtime_artifacts()
-            return jsonify({"status": "ok", "model_version": model_record["version"]})
+            return jsonify({"status": "ready", "model_version": model_record["version"]})
         except Exception as exc:  # pragma: no cover
             return jsonify({"status": "error", "message": str(exc)}), 500
 
