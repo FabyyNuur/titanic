@@ -114,9 +114,11 @@ export default function PredictPage() {
     setModelsError(null);
     try {
       const data = await fetchJson<{ models: ModelOption[] }>("/api/models");
-      const list = data.models || [];
+      const list = (data.models || []).filter(
+        (model) => model.available !== false,
+      );
       setModels(list);
-      const first = list.find((m) => m.available !== false) || list[0];
+      const first = list[0];
       if (first?.version) setSelectedVersion(first.version);
     } catch (e) {
       setModelsError(e instanceof Error ? e.message : String(e));
