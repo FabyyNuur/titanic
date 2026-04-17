@@ -9,7 +9,7 @@ services:
       cd frontend
       npm ci
       npm run build
-    startCommand: gunicorn mlops.app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    startCommand: gunicorn mlops.app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
     healthCheckPath: /api/health
     envVars:
       - key: MLOPS_DEBUG
