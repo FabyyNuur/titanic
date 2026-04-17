@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
 
-from mlops.config.settings import LEGACY_MODELS_DIR, PROJECT_ROOT, REGISTRY_PATH
+from mlops.config.settings import (
+    LEGACY_MODELS_DIR,
+    MODELS_DIR,
+    PIPELINE_ARTIFACT_PATH,
+    PROJECT_ROOT,
+    REGISTRY_PATH,
+)
 from mlops.domain.pipeline_domain import validate_schema
 from mlops.infrastructure.registry_repository import load_registry
 
@@ -33,6 +40,8 @@ def select_model_record(version: str | None = None) -> dict:
     registry = load_registry(REGISTRY_PATH)
     models = registry.get("models", [])
     if not models:
+        models = discover_runtime_models_catalog()
+    if not models:
         raise ValueError("Aucun modele enregistre dans le registre.")
     if version:
         for record in models:
@@ -41,6 +50,44 @@ def select_model_record(version: str | None = None) -> dict:
         raise ValueError(f"Version de modele introuvable: {version}")
     production_models = [record for record in models if record.get("stage") == "production"]
     return production_models[-1] if production_models else models[-1]
+
+
+def _iso_from_mtime(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def _model_version_from_path(path: Path) -> str:
+    stem = path.stem
+    if stem.startswith("model_"):
+        return stem.replace("model_", "", 1)
+    return stem
+
+
+def discover_runtime_models_catalog() -> list[dict[str, Any]]:
+    model_paths = sorted(MODELS_DIR.glob("model_*.joblib"), key=lambda p: p.stat().st_mtime)
+    if not model_paths:
+        return []
+
+    pipeline_exists = PIPELINE_ARTIFACT_PATH.exists()
+    records: list[dict[str, Any]] = []
+    for index, model_path in enumerate(model_paths):
+        version = _model_version_from_path(model_path)
+        records.append(
+            {
+                "version": version,
+                "created_at": _iso_from_mtime(model_path),
+                "model_path": str(model_path.relative_to(PROJECT_ROOT)),
+                "pipeline_path": str(PIPELINE_ARTIFACT_PATH.relative_to(PROJECT_ROOT)),
+                "metrics": {},
+                "features": [],
+                "stage": "production" if index == len(model_paths) - 1 else "staging",
+                "source": "runtime_fallback",
+                "display_name": f"Version MLOps {version}",
+                "available": model_path.exists() and pipeline_exists,
+            }
+        )
+
+    return list(reversed(records))
 
 
 def load_runtime_artifacts(version: str | None = None):
@@ -74,10 +121,15 @@ def registry_catalog() -> list[dict[str, Any]]:
         key=lambda record: record.get("created_at", ""),
         reverse=True,
     )
+    if not registry_models:
+        return discover_runtime_models_catalog()
+
     for record in registry_models:
         record["display_name"] = f"Version MLOps {record.get('version', '-')}"
         record["source"] = "registry"
-        record["available"] = True
+        model_path = resolve_artifact_path(record.get("model_path", ""))
+        pipeline_path = resolve_artifact_path(record.get("pipeline_path", ""))
+        record["available"] = model_path.exists() and pipeline_path.exists()
     return registry_models
 
 
