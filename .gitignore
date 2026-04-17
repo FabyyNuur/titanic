@@ -1,0 +1,65 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+build/
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Outils & tests
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Secrets (ne jamais versionner)
+.env
+.env.*
+!.env.example
+*.pem
+
+# Jupyter
+.ipynb_checkpoints/
+
+# --- Artefacts runtime (mlops/config/settings.py → PROJECT_ROOT/var) ---
+var/models/*
+!var/models/.gitkeep
+var/runs/*
+!var/runs/.gitkeep
+var/logs/
+var/registry.json
+var/pipeline.joblib
+
+# Dossier legacy éventuel pour anciens modèles binaires
+modeles/*.pkl
+modeles/*.joblib
+modeles/*.pickle
+
+# --- Frontend (sources) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/*.local
+
+# --- Prototype / maquette locale ---
+design-machine-learn/node_modules/
+design-machine-learn/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
