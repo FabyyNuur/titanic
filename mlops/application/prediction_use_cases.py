@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from mlops.application.model_use_cases import (
+    default_prediction_version,
     load_legacy_model_from_version,
     load_runtime_artifacts,
     preprocess_for_legacy,
@@ -132,6 +133,8 @@ def build_predictions_payload(predictions: list, probabilities: list[float] | No
 
 def predict_file(df: pd.DataFrame, requested_version: str | None):
     start = time.perf_counter()
+    if not requested_version:
+        requested_version = default_prediction_version()
     if requested_version and requested_version.startswith("legacy::"):
         predictions, probabilities, model_record, df_valid = predict_with_legacy_model(df, requested_version)
     else:
