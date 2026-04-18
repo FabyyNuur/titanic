@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import warnings
 
 import joblib
 import pandas as pd
@@ -19,6 +20,13 @@ from mlops.infrastructure.registry_repository import load_registry
 
 
 def _ensure_sklearn_pickle_compat() -> None:
+    try:
+        from sklearn.exceptions import InconsistentVersionWarning
+
+        warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+    except Exception:
+        pass
+
     # Fix: _RemainderColsList missing in newer sklearn versions
     try:
         import sklearn.compose._column_transformer as column_transformer_module
