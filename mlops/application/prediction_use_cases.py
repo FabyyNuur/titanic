@@ -57,6 +57,7 @@ def _extract_probabilities(model, transformed) -> list[float] | None:
     return raw_proba[:, 0].astype(float).tolist()
 
 
+
 def predict_with_registry_model(df: pd.DataFrame, requested_version: str | None):
     model, pipeline_bundle, model_record = load_runtime_artifacts(version=requested_version)
     
@@ -75,13 +76,25 @@ def predict_with_registry_model(df: pd.DataFrame, requested_version: str | None)
             else:
                 df[col] = 0  # default to 0 if unknown
     
+    # Convert numeric columns to proper dtype to avoid "could not convert string to float" errors
+    for col in numeric_features:
+        if col in df.columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            except Exception:
+                df[col] = 0
+    
+    # Ensure categorical columns are strings
+    for col in categorical_features:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
+    
     # Now validate the schema with all required columns present
     df_valid = validate_schema(df, expected_features)
     transformed = pipeline_bundle["pipeline"].transform(df_valid)
     predictions = model.predict(transformed).tolist()
     probabilities = _extract_probabilities(model, transformed)
     return predictions, probabilities, model_record, df_valid
-
 
 def predict_with_legacy_model(df: pd.DataFrame, requested_version: str):
     model, expected_features, model_record = load_legacy_model_from_version(requested_version)
