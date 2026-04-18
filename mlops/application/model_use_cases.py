@@ -102,10 +102,31 @@ def select_model_record(version: str | None = None) -> dict:
     if version:
         for record in models:
             if record.get("version") == version:
+                if record.get("model_path") and record.get("pipeline_path"):
+                    try:
+                        model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
+                        if not _registry_artifacts_are_compatible(model, pipeline_bundle):
+                            return select_model_record(None)
+                    except Exception:
+                        return select_model_record(None)
                 return record
         raise ValueError(f"Version de modele introuvable: {version}")
-    production_models = [record for record in models if record.get("stage") == "production"]
-    return production_models[-1] if production_models else models[-1]
+
+    compatible_models = []
+    for record in models:
+        try:
+            model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
+        except Exception:
+            continue
+        if _registry_artifacts_are_compatible(model, pipeline_bundle):
+            compatible_models.append(record)
+
+    if not compatible_models:
+        production_models = [record for record in models if record.get("stage") == "production"]
+        return production_models[-1] if production_models else models[-1]
+
+    production_models = [record for record in compatible_models if record.get("stage") == "production"]
+    return production_models[-1] if production_models else compatible_models[-1]
 
 
 def _iso_from_mtime(path: Path) -> str:
@@ -117,6 +138,53 @@ def _model_version_from_path(path: Path) -> str:
     if stem.startswith("model_"):
         return stem.replace("model_", "", 1)
     return stem
+
+
+def _build_registry_sample_frame(
+    features: list[str],
+    numeric_features: list[str],
+    categorical_features: list[str],
+) -> pd.DataFrame:
+    sample_row: dict[str, Any] = {}
+    for feature in features:
+        if feature in numeric_features:
+            sample_row[feature] = 0
+        elif feature in categorical_features:
+            if feature == "Sex":
+                sample_row[feature] = "male"
+            elif feature == "Embarked":
+                sample_row[feature] = "S"
+            else:
+                sample_row[feature] = ""
+        else:
+            sample_row[feature] = 0
+    return pd.DataFrame([sample_row])
+
+
+def _registry_artifacts_are_compatible(model, pipeline_bundle: dict[str, Any]) -> bool:
+    features = list(pipeline_bundle.get("features", []))
+    if not features:
+        return False
+
+    numeric_features = list(pipeline_bundle.get("numeric_features", []))
+    categorical_features = list(pipeline_bundle.get("categorical_features", []))
+    sample_frame = _build_registry_sample_frame(features, numeric_features, categorical_features)
+
+    try:
+        transformed = pipeline_bundle["pipeline"].transform(sample_frame[features])
+    except Exception:
+        return False
+
+    expected_features = getattr(model, "n_features_in_", None)
+    if expected_features is None:
+        return True
+    return getattr(transformed, "shape", (0, 0))[1] == expected_features
+
+
+def _load_runtime_artifacts_from_record(model_record: dict[str, Any]):
+    model = joblib.load(resolve_artifact_path(model_record["model_path"]))
+    pipeline_bundle = joblib.load(resolve_artifact_path(model_record["pipeline_path"]))
+    return model, pipeline_bundle
 
 
 def discover_runtime_models_catalog() -> list[dict[str, Any]]:
@@ -149,8 +217,7 @@ def discover_runtime_models_catalog() -> list[dict[str, Any]]:
 def load_runtime_artifacts(version: str | None = None):
     _ensure_sklearn_pickle_compat()
     model_record = select_model_record(version=version)
-    model = joblib.load(resolve_artifact_path(model_record["model_path"]))
-    pipeline_bundle = joblib.load(resolve_artifact_path(model_record["pipeline_path"]))
+    model, pipeline_bundle = _load_runtime_artifacts_from_record(model_record)
     return model, pipeline_bundle, model_record
 
 
@@ -187,6 +254,12 @@ def registry_catalog() -> list[dict[str, Any]]:
         model_path = resolve_artifact_path(record.get("model_path", ""))
         pipeline_path = resolve_artifact_path(record.get("pipeline_path", ""))
         record["available"] = model_path.exists() and pipeline_path.exists()
+        if record["available"]:
+            try:
+                model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
+                record["available"] = _registry_artifacts_are_compatible(model, pipeline_bundle)
+            except Exception:
+                record["available"] = False
     return registry_models
 
 
