@@ -93,6 +93,7 @@ def resolve_artifact_path(path_value: str) -> Path:
 
 
 def select_model_record(version: str | None = None) -> dict:
+    ensure_compatible_runtime_model()
     registry = load_registry(REGISTRY_PATH)
     models = registry.get("models", [])
     if not models:
@@ -106,24 +107,16 @@ def select_model_record(version: str | None = None) -> dict:
                     try:
                         model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
                         if not _registry_artifacts_are_compatible(model, pipeline_bundle):
-                            return select_model_record(None)
+                            break
                     except Exception:
-                        return select_model_record(None)
+                        break
                 return record
-        raise ValueError(f"Version de modele introuvable: {version}")
+        version = None
 
-    compatible_models = []
-    for record in models:
-        try:
-            model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
-        except Exception:
-            continue
-        if _registry_artifacts_are_compatible(model, pipeline_bundle):
-            compatible_models.append(record)
+    compatible_models = _compatible_model_records(models)
 
     if not compatible_models:
-        production_models = [record for record in models if record.get("stage") == "production"]
-        return production_models[-1] if production_models else models[-1]
+        raise ValueError("Aucun modèle compatible disponible sur cette instance.")
 
     production_models = [record for record in compatible_models if record.get("stage") == "production"]
     return production_models[-1] if production_models else compatible_models[-1]
@@ -187,6 +180,48 @@ def _load_runtime_artifacts_from_record(model_record: dict[str, Any]):
     return model, pipeline_bundle
 
 
+_RUNTIME_MODEL_BOOTSTRAPPED = False
+
+
+def _compatible_model_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compatible_records: list[dict[str, Any]] = []
+    for record in records:
+        model_path = record.get("model_path")
+        pipeline_path = record.get("pipeline_path")
+        if not model_path or not pipeline_path:
+            if record.get("available"):
+                compatible_records.append(record)
+            continue
+        try:
+            model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
+        except Exception:
+            continue
+        if _registry_artifacts_are_compatible(model, pipeline_bundle):
+            compatible_records.append(record)
+    return compatible_records
+
+
+def ensure_compatible_runtime_model() -> None:
+    global _RUNTIME_MODEL_BOOTSTRAPPED
+    if _RUNTIME_MODEL_BOOTSTRAPPED:
+        return
+
+    if _compatible_model_records(legacy_catalog() + discover_runtime_models_catalog()):
+        _RUNTIME_MODEL_BOOTSTRAPPED = True
+        return
+
+    train_dataset_path = PROJECT_ROOT / "train.csv"
+    if train_dataset_path.exists():
+        try:
+            from mlops.application.retrain_use_case import retrain_with_new_data
+
+            retrain_with_new_data(str(train_dataset_path), min_f1_to_promote=0.0)
+        except Exception:
+            pass
+
+    _RUNTIME_MODEL_BOOTSTRAPPED = True
+
+
 def discover_runtime_models_catalog() -> list[dict[str, Any]]:
     model_paths = sorted(MODELS_DIR.glob("model_*.joblib"), key=lambda p: p.stat().st_mtime)
     if not model_paths:
@@ -211,7 +246,16 @@ def discover_runtime_models_catalog() -> list[dict[str, Any]]:
             }
         )
 
-    return list(reversed(records))
+    records = list(reversed(records))
+    for record in records:
+        if not record.get("available"):
+            continue
+        try:
+            model, pipeline_bundle = _load_runtime_artifacts_from_record(record)
+            record["available"] = _registry_artifacts_are_compatible(model, pipeline_bundle)
+        except Exception:
+            record["available"] = False
+    return records
 
 
 def load_runtime_artifacts(version: str | None = None):
@@ -268,6 +312,7 @@ def list_available_models() -> list[dict[str, Any]]:
 
 
 def default_prediction_version() -> str:
+    ensure_compatible_runtime_model()
     legacy_models = legacy_catalog()
     for record in legacy_models:
         if record.get("available"):
