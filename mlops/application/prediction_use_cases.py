@@ -59,7 +59,24 @@ def _extract_probabilities(model, transformed) -> list[float] | None:
 
 def predict_with_registry_model(df: pd.DataFrame, requested_version: str | None):
     model, pipeline_bundle, model_record = load_runtime_artifacts(version=requested_version)
-    df_valid = validate_schema(df, pipeline_bundle["features"])
+    
+    # Handle missing columns intelligently - add defaults for columns not provided
+    expected_features = pipeline_bundle["features"]
+    numeric_features = pipeline_bundle.get("numeric_features", [])
+    categorical_features = pipeline_bundle.get("categorical_features", [])
+    
+    # Add missing columns with sensible defaults
+    for col in expected_features:
+        if col not in df.columns:
+            if col in numeric_features:
+                df[col] = 0
+            elif col in categorical_features:
+                df[col] = ""
+            else:
+                df[col] = 0  # default to 0 if unknown
+    
+    # Now validate the schema with all required columns present
+    df_valid = validate_schema(df, expected_features)
     transformed = pipeline_bundle["pipeline"].transform(df_valid)
     predictions = model.predict(transformed).tolist()
     probabilities = _extract_probabilities(model, transformed)

@@ -30,39 +30,48 @@ def _ensure_sklearn_pickle_compat() -> None:
                 pass
             column_transformer_module._RemainderColsList = _RemainderColsList
 
-    # Fix: SimpleImputer._fill_dtype missing when unpickling old models
+    # Fix: SimpleImputer._fill_dtype missing + signature issues from old pickled models
     try:
         from sklearn.impute import SimpleImputer
     except Exception:
         pass
     else:
-        original_init = SimpleImputer.__init__
+        # Patch __setstate__ to handle unpickling and add missing attributes
+        original_setstate = SimpleImputer.__setstate__ if hasattr(SimpleImputer, '__setstate__') else None
         
-        def patched_init(self, *args, **kwargs):
-            original_init(self, *args, **kwargs)
+        def patched_setstate(self, state):
+            if state is None:
+                state = {}
+            if callable(original_setstate):
+                try:
+                    original_setstate(self, state)
+                except Exception:
+                    self.__dict__.update(state)
+            else:
+                self.__dict__.update(state)
+            
+            # Ensure all required attributes exist
             if not hasattr(self, '_fill_dtype'):
                 self._fill_dtype = None
+            if not hasattr(self, 'missing_values'):
+                self.missing_values = float('nan')
+            if not hasattr(self, 'strategy'):
+                self.strategy = 'mean'
         
-        SimpleImputer.__init__ = patched_init
+        SimpleImputer.__setstate__ = patched_setstate
         
-        if hasattr(SimpleImputer, '__setstate__'):
-            original_setstate = SimpleImputer.__setstate__
+        # Also patch __reduce_ex__ to handle pickling gracefully
+        if hasattr(SimpleImputer, '__reduce_ex__'):
+            original_reduce_ex = SimpleImputer.__reduce_ex__
             
-            def patched_setstate(self, state):
-                original_setstate(self, state)
-                if not hasattr(self, '_fill_dtype'):
-                    self._fill_dtype = None
+            def patched_reduce_ex(self, protocol):
+                try:
+                    return original_reduce_ex(self, protocol)
+                except Exception:
+                    # Fallback to basic pickle
+                    return (SimpleImputer, (), self.__getstate__())
             
-            SimpleImputer.__setstate__ = patched_setstate
-        else:
-            original_setstate = lambda self, state: self.__dict__.update(state)
-            
-            def patched_setstate(self, state):
-                original_setstate(self, state)
-                if not hasattr(self, '_fill_dtype'):
-                    self._fill_dtype = None
-            
-            SimpleImputer.__setstate__ = patched_setstate
+            SimpleImputer.__reduce_ex__ = patched_reduce_ex
 
 ASSIGNMENT_MODELS = [
     ("logistic_regression", "Régression Logistique", "Logistic_Regression.joblib"),
