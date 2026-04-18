@@ -267,6 +267,16 @@ def list_available_models() -> list[dict[str, Any]]:
     return legacy_catalog() + registry_catalog()
 
 
+def default_prediction_version() -> str:
+    legacy_models = legacy_catalog()
+    for record in legacy_models:
+        if record.get("available"):
+            return record["version"]
+
+    model_record = select_model_record(None)
+    return model_record["version"]
+
+
 def preprocess_for_legacy(df: pd.DataFrame, expected_features: list[str]) -> pd.DataFrame:
     data = df.copy()
     for col in ["Age", "Fare", "SibSp", "Parch", "Pclass"]:
