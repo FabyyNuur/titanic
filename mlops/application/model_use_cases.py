@@ -84,12 +84,164 @@ ASSIGNMENT_MODELS = [
     ("xgboost", "XGBoost", "XGBoost.joblib"),
 ]
 
+_LEGACY_MODELS_BOOTSTRAPPED = False
+
 
 def resolve_artifact_path(path_value: str) -> Path:
     path = Path(path_value)
     if path.is_absolute():
         return path
     return PROJECT_ROOT / path
+
+
+def _legacy_model_path(filename: str) -> Path:
+    return LEGACY_MODELS_DIR / filename
+
+
+def _build_legacy_estimator(model_key: str):
+    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.naive_bayes import GaussianNB
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.svm import SVC
+    from sklearn.tree import DecisionTreeClassifier
+
+    try:
+        from xgboost import XGBClassifier
+    except Exception:
+        XGBClassifier = None
+
+    if model_key == "logistic_regression":
+        return LogisticRegression(max_iter=1000, random_state=42)
+    if model_key == "knn":
+        return KNeighborsClassifier(n_neighbors=5)
+    if model_key == "decision_tree":
+        return DecisionTreeClassifier(random_state=42)
+    if model_key == "random_forest":
+        return RandomForestClassifier(n_estimators=300, random_state=42)
+    if model_key == "gradient_boosting":
+        return GradientBoostingClassifier(random_state=42)
+    if model_key == "svm":
+        return SVC(probability=True, random_state=42)
+    if model_key == "naive_bayes":
+        return GaussianNB()
+    if model_key == "xgboost" and XGBClassifier is not None:
+        return XGBClassifier(
+            n_estimators=200,
+            learning_rate=0.1,
+            max_depth=3,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=42,
+            eval_metric="logloss",
+        )
+    if model_key == "xgboost":
+        return GradientBoostingClassifier(random_state=42)
+    raise ValueError(f"Modèle legacy inconnu: {model_key}")
+
+
+def _legacy_model_artifact_is_valid(path: Path, expected_features: list[str]) -> bool:
+    if not path.exists():
+        return False
+    try:
+        payload = joblib.load(path)
+    except Exception:
+        return False
+
+    model = payload.get("model", payload) if isinstance(payload, dict) else payload
+    features = payload.get("features", []) if isinstance(payload, dict) else []
+    if features and features != expected_features:
+        return False
+
+    sample = pd.DataFrame([{
+        "Pclass": 3,
+        "Age": 28,
+        "SibSp": 0,
+        "Parch": 0,
+        "Fare": 7.25,
+        "Sex_male": 1,
+        "Embarked_Q": 0,
+        "Embarked_S": 1,
+    }])
+    try:
+        model.predict(sample[expected_features])
+        return True
+    except Exception:
+        return False
+
+
+def ensure_legacy_models_bootstrapped() -> None:
+    global _LEGACY_MODELS_BOOTSTRAPPED
+    if _LEGACY_MODELS_BOOTSTRAPPED:
+        return
+
+    expected_features = ["Pclass", "Age", "SibSp", "Parch", "Fare", "Sex_male", "Embarked_Q", "Embarked_S"]
+    if all(_legacy_model_artifact_is_valid(_legacy_model_path(filename), expected_features) for _, _, filename in ASSIGNMENT_MODELS):
+        _LEGACY_MODELS_BOOTSTRAPPED = True
+        return
+
+    train_dataset_path = PROJECT_ROOT / "train.csv"
+    if not train_dataset_path.exists():
+        _LEGACY_MODELS_BOOTSTRAPPED = True
+        return
+
+    from sklearn.base import clone
+    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.naive_bayes import GaussianNB
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.svm import SVC
+    from sklearn.tree import DecisionTreeClassifier
+
+    try:
+        from xgboost import XGBClassifier
+    except Exception:
+        XGBClassifier = None
+
+    data = pd.read_csv(train_dataset_path)
+    if "Survived" not in data.columns:
+        _LEGACY_MODELS_BOOTSTRAPPED = True
+        return
+
+    model_factories = {
+        "logistic_regression": LogisticRegression(max_iter=1000, random_state=42),
+        "knn": KNeighborsClassifier(n_neighbors=5),
+        "decision_tree": DecisionTreeClassifier(random_state=42),
+        "random_forest": RandomForestClassifier(n_estimators=300, random_state=42),
+        "gradient_boosting": GradientBoostingClassifier(random_state=42),
+        "svm": SVC(probability=True, random_state=42),
+        "naive_bayes": GaussianNB(),
+        "xgboost": XGBClassifier(
+            n_estimators=200,
+            learning_rate=0.1,
+            max_depth=3,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=42,
+            eval_metric="logloss",
+        ) if XGBClassifier is not None else GradientBoostingClassifier(random_state=42),
+    }
+
+    features = expected_features
+    prepared = preprocess_for_legacy(data, features)
+    X = prepared[features]
+    y = data["Survived"].astype(int)
+
+    LEGACY_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    for model_key, _, filename in ASSIGNMENT_MODELS:
+        path = _legacy_model_path(filename)
+        try:
+            estimator = clone(model_factories[model_key])
+            estimator.fit(X, y)
+            joblib.dump({"model": estimator, "features": features}, path)
+        except Exception:
+            if path.exists():
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+
+    _LEGACY_MODELS_BOOTSTRAPPED = True
 
 
 def select_model_record(version: str | None = None) -> dict:
@@ -206,6 +358,8 @@ def ensure_compatible_runtime_model() -> None:
     if _RUNTIME_MODEL_BOOTSTRAPPED:
         return
 
+    ensure_legacy_models_bootstrapped()
+
     if _compatible_model_records(legacy_catalog() + discover_runtime_models_catalog()):
         _RUNTIME_MODEL_BOOTSTRAPPED = True
         return
@@ -266,6 +420,7 @@ def load_runtime_artifacts(version: str | None = None):
 
 
 def legacy_catalog() -> list[dict[str, Any]]:
+    ensure_legacy_models_bootstrapped()
     catalog = []
     for model_key, label, filename in ASSIGNMENT_MODELS:
         path = LEGACY_MODELS_DIR / filename
@@ -312,6 +467,7 @@ def list_available_models() -> list[dict[str, Any]]:
 
 
 def default_prediction_version() -> str:
+    ensure_legacy_models_bootstrapped()
     ensure_compatible_runtime_model()
     legacy_models = legacy_catalog()
     for record in legacy_models:
@@ -344,6 +500,7 @@ def preprocess_for_legacy(df: pd.DataFrame, expected_features: list[str]) -> pd.
 
 
 def load_legacy_model_from_version(version: str):
+    ensure_legacy_models_bootstrapped()
     model_key = version.replace("legacy::", "", 1)
     for key, label, filename in ASSIGNMENT_MODELS:
         if key != model_key:
