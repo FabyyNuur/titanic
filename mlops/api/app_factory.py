@@ -49,23 +49,28 @@ def create_app() -> Flask:
 
     @api.post("/predict")
     def predict():
-        payload = request.get_json(force=True)
-        rows = [payload] if isinstance(payload, dict) else payload
-        requested_version = None
-        if isinstance(payload, dict):
-            requested_version = payload.get("model_version")
-            rows = [payload.get("features", payload)]
-        df = pd.DataFrame(rows)
-        predictions, probabilities, model_record, _, latency_ms = run_predict_file(df, requested_version)
-        response = {
-            "model_version": model_record.get("version"),
-            "model_display_name": model_record.get("display_name", model_record.get("version")),
-            "predictions": predictions,
-            "latency_ms": latency_ms,
-        }
-        if probabilities is not None:
-            response["probabilities"] = probabilities
-        return jsonify(response)
+        try:
+            payload = request.get_json(force=True)
+            rows = [payload] if isinstance(payload, dict) else payload
+            requested_version = None
+            if isinstance(payload, dict):
+                requested_version = payload.get("model_version")
+                rows = [payload.get("features", payload)]
+            df = pd.DataFrame(rows)
+            predictions, probabilities, model_record, _, latency_ms = run_predict_file(df, requested_version)
+            response = {
+                "model_version": model_record.get("version"),
+                "model_display_name": model_record.get("display_name", model_record.get("version")),
+                "predictions": predictions,
+                "latency_ms": latency_ms,
+            }
+            if probabilities is not None:
+                response["probabilities"] = probabilities
+            return jsonify(response)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover
+            return jsonify({"error": f"Erreur interne: {exc}"}), 500
 
     @api.get("/metrics")
     def metrics():
