@@ -19,9 +19,16 @@ def retrain_with_dataframe(
     if target_column not in df.columns:
         raise ValueError(f"Colonne cible introuvable: {target_column}")
 
+    # Handle small datasets gracefully
+    if len(df) < 10:
+        raise ValueError(f"Ensemble d'entraînement trop petit ({len(df)} lignes). Minimum: 10 lignes.")
+    
+    # Adjust test_size for small datasets to ensure minimum test set size
+    test_size = 0.2 if len(df) >= 50 else max(0.1, 2 / len(df))
+
     X = df.drop(columns=[target_column])
     y = df[target_column]
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42, stratify=y)
 
     artifacts = fit_preprocessing_pipeline(X_train)
     X_train_t = artifacts.pipeline.transform(X_train)

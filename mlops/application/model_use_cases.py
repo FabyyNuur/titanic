@@ -19,18 +19,59 @@ from mlops.infrastructure.registry_repository import load_registry
 
 
 def _ensure_sklearn_pickle_compat() -> None:
+    # Fix: _RemainderColsList missing in newer sklearn versions
     try:
         import sklearn.compose._column_transformer as column_transformer_module
     except Exception:
-        return
-
-    if hasattr(column_transformer_module, "_RemainderColsList"):
-        return
-
-    class _RemainderColsList(list):
         pass
+    else:
+        if not hasattr(column_transformer_module, "_RemainderColsList"):
+            class _RemainderColsList(list):
+                pass
+            column_transformer_module._RemainderColsList = _RemainderColsList
 
-    column_transformer_module._RemainderColsList = _RemainderColsList
+    # Fix: SimpleImputer._fill_dtype missing + signature issues from old pickled models
+    try:
+        from sklearn.impute import SimpleImputer
+    except Exception:
+        pass
+    else:
+        # Patch __setstate__ to handle unpickling and add missing attributes
+        original_setstate = SimpleImputer.__setstate__ if hasattr(SimpleImputer, '__setstate__') else None
+        
+        def patched_setstate(self, state):
+            if state is None:
+                state = {}
+            if callable(original_setstate):
+                try:
+                    original_setstate(self, state)
+                except Exception:
+                    self.__dict__.update(state)
+            else:
+                self.__dict__.update(state)
+            
+            # Ensure all required attributes exist
+            if not hasattr(self, '_fill_dtype'):
+                self._fill_dtype = None
+            if not hasattr(self, 'missing_values'):
+                self.missing_values = float('nan')
+            if not hasattr(self, 'strategy'):
+                self.strategy = 'mean'
+        
+        SimpleImputer.__setstate__ = patched_setstate
+        
+        # Also patch __reduce_ex__ to handle pickling gracefully
+        if hasattr(SimpleImputer, '__reduce_ex__'):
+            original_reduce_ex = SimpleImputer.__reduce_ex__
+            
+            def patched_reduce_ex(self, protocol):
+                try:
+                    return original_reduce_ex(self, protocol)
+                except Exception:
+                    # Fallback to basic pickle
+                    return (SimpleImputer, (), self.__getstate__())
+            
+            SimpleImputer.__reduce_ex__ = patched_reduce_ex
 
 ASSIGNMENT_MODELS = [
     ("logistic_regression", "Régression Logistique", "Logistic_Regression.joblib"),
