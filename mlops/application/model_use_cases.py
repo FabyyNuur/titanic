@@ -19,18 +19,50 @@ from mlops.infrastructure.registry_repository import load_registry
 
 
 def _ensure_sklearn_pickle_compat() -> None:
+    # Fix: _RemainderColsList missing in newer sklearn versions
     try:
         import sklearn.compose._column_transformer as column_transformer_module
     except Exception:
-        return
-
-    if hasattr(column_transformer_module, "_RemainderColsList"):
-        return
-
-    class _RemainderColsList(list):
         pass
+    else:
+        if not hasattr(column_transformer_module, "_RemainderColsList"):
+            class _RemainderColsList(list):
+                pass
+            column_transformer_module._RemainderColsList = _RemainderColsList
 
-    column_transformer_module._RemainderColsList = _RemainderColsList
+    # Fix: SimpleImputer._fill_dtype missing when unpickling old models
+    try:
+        from sklearn.impute import SimpleImputer
+    except Exception:
+        pass
+    else:
+        original_init = SimpleImputer.__init__
+        
+        def patched_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            if not hasattr(self, '_fill_dtype'):
+                self._fill_dtype = None
+        
+        SimpleImputer.__init__ = patched_init
+        
+        if hasattr(SimpleImputer, '__setstate__'):
+            original_setstate = SimpleImputer.__setstate__
+            
+            def patched_setstate(self, state):
+                original_setstate(self, state)
+                if not hasattr(self, '_fill_dtype'):
+                    self._fill_dtype = None
+            
+            SimpleImputer.__setstate__ = patched_setstate
+        else:
+            original_setstate = lambda self, state: self.__dict__.update(state)
+            
+            def patched_setstate(self, state):
+                original_setstate(self, state)
+                if not hasattr(self, '_fill_dtype'):
+                    self._fill_dtype = None
+            
+            SimpleImputer.__setstate__ = patched_setstate
 
 ASSIGNMENT_MODELS = [
     ("logistic_regression", "Régression Logistique", "Logistic_Regression.joblib"),
