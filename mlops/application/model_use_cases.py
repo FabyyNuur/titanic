@@ -17,6 +17,21 @@ from mlops.config.settings import (
 from mlops.domain.pipeline_domain import validate_schema
 from mlops.infrastructure.registry_repository import load_registry
 
+
+def _ensure_sklearn_pickle_compat() -> None:
+    try:
+        import sklearn.compose._column_transformer as column_transformer_module
+    except Exception:
+        return
+
+    if hasattr(column_transformer_module, "_RemainderColsList"):
+        return
+
+    class _RemainderColsList(list):
+        pass
+
+    column_transformer_module._RemainderColsList = _RemainderColsList
+
 ASSIGNMENT_MODELS = [
     ("logistic_regression", "Régression Logistique", "Logistic_Regression.joblib"),
     ("knn", "KNN", "KNN.joblib"),
@@ -91,6 +106,7 @@ def discover_runtime_models_catalog() -> list[dict[str, Any]]:
 
 
 def load_runtime_artifacts(version: str | None = None):
+    _ensure_sklearn_pickle_compat()
     model_record = select_model_record(version=version)
     model = joblib.load(resolve_artifact_path(model_record["model_path"]))
     pipeline_bundle = joblib.load(resolve_artifact_path(model_record["pipeline_path"]))
